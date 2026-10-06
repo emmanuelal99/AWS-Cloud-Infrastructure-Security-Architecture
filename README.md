@@ -1,325 +1,450 @@
-# 🛡️ AWS Cloud Infrastructure & Security Architecture
-### BMT Marine Research — Secure, Scalable & Highly Available AWS Deployment
+# AWS Cloud Infrastructure & Security Architecture
 
-![AWS](https://img.shields.io/badge/AWS-Cloud-orange?logo=amazonaws)
-![Security](https://img.shields.io/badge/Security-Defense--in--Depth-blue)
-![FinOps](https://img.shields.io/badge/FinOps-Cost--Governed-green)
-![HA](https://img.shields.io/badge/High%20Availability-Multi--AZ-purple)
-![Status](https://img.shields.io/badge/Status-Completed-brightgreen)
+### BlueTide Marine Technologies (BMT): a secure, highly available, cost-governed three-tier deployment on AWS
 
----
+![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?logo=amazonaws&logoColor=white)
+![Region](https://img.shields.io/badge/Region-us--east--1-232F3E)
+![Security](https://img.shields.io/badge/Security-Defence--in--Depth-1f6feb)
+![HA](https://img.shields.io/badge/High%20Availability-Multi--AZ-8957e5)
+![FinOps](https://img.shields.io/badge/FinOps-Cost--Governed-2ea043)
+![Environment](https://img.shields.io/badge/Built%20in-AWS%20Academy%20Learner%20Lab-lightgrey)
 
-## 🔗 Quick Navigation
-- [Overview](#-overview)
-- [Architecture Diagram](#%EF%B8%8F-architecture-diagram)
-- [Project Metrics](#-project-metrics)
-- [Services Deployed](#%EF%B8%8F-services-deployed)
-- [Architecture Decisions](#-architecture-decisions)
-- [Build Walkthrough](#%EF%B8%8F-build-walkthrough)
-- [Risk Assessment](#%EF%B8%8F-risk-assessment)
-- [Engineering Problems Solved](#-three-engineering-problems-solved)
-- [Production Roadmap](#-production-improvement-roadmap)
-- [Skills Demonstrated](#-skills-demonstrated)
+Designed, built and **ran** the public cloud part of a hybrid cloud strategy for a marine technology company. The web tier, database and cache run in private subnets across two Availability Zones, and the only way in from the internet is an Application Load Balancer. Every API action in the account is recorded, and costs are capped by design.
 
----
+The build was done in an **AWS Academy student lab**, which blocks some AWS services. I tried each blocked control, recorded the denial, and documented a compensating control, a residual risk and the production upgrade path. Every claim below is backed by a screenshot from the live environment, including the places where what was deployed differs from what was designed.
 
-## 📌 Overview
-BMT is a marine research organisation that gathers and analyses data about the oceans, weather conditions, and the environment to support scientific research and operational planning.
-
-> **Visual Proof: Successful Application Delivery**
-> *The live web application successfully resolving through the highly available Application Load Balancer (ALB).*
->
-> <img src="images/bmt-web-app-live.png" alt="Live BMT Web Application" width="800">
-
-This project demonstrates the design and deployment of a secure, highly available, and cost-optimised AWS environment capable of supporting those workloads. The architecture was designed around three key business requirements:
-
-1. **Keep services running even if underlying infrastructure fails.**
-2. **Protect sensitive telemetry and research data**.
-3. **Keep tight control over cloud costs**.
-
-The end result combines network isolation, automated scaling, high availability, encryption, monitoring, and audit logging into a production-style AWS deployment.
-
----
-
-## 🗺️ Architecture Diagram
-
-> **Visual Proof: Complete Architecture**
-> *The final architecture showing network segmentation, security boundaries, application flow, and high-availability design.*
->
-> <img src="images/architecture-diagram.png" alt="Architecture Diagram" width="800">
-
----
-
-## 📊 Project Metrics
-
-| Metric | Value |
+| | |
 | :--- | :--- |
-| **Availability Zones** | 2 |
-| **Public Subnets** | 2 |
-| **Private Subnets** | 4 |
-| **Load Balancers** | 1 Application Load Balancer |
-| **Auto Scaling Range** | 2–4 EC2 Instances |
-| **Database** | RDS MySQL Multi-AZ |
-| **Cache Layer** | ElastiCache Redis |
-| **Storage** | S3 + Glacier Flexible Retrieval |
-| **Monitoring** | CloudWatch |
-| **Auditing** | CloudTrail |
-| **Encryption** | AWS KMS (AES-256) |
-
-### Key Outcomes
-- ✅ Multi-AZ resilience
-- ✅ Private application and database tiers
-- ✅ Automated horizontal scaling
-- ✅ Encrypted storage
-- ✅ Continuous monitoring
-- ✅ Immutable audit logging
-- ✅ FinOps-driven architecture
+| **Workload** | Three-tier web platform for oceanographic and meteorological data analytics |
+| **Network** | Custom VPC `10.0.0.0/16`, 6 subnets across 2 AZs, Regional NAT Gateway, S3 Gateway Endpoint |
+| **Compute** | Ubuntu 24.04 + Apache on EC2 (`t3.micro`) in an Auto Scaling Group (min 2 / max 4) behind an ALB |
+| **Data** | RDS for MySQL 8.4 (Multi-AZ), ElastiCache for Redis 7.1, S3 with a 30-day Glacier lifecycle rule |
+| **Security** | Private tiers with no public IPs, encryption at rest, Redis encryption in transit, S3 Block Public Access, multi-region CloudTrail |
+| **Result** | Site served through the ALB from 2 healthy instances in 2 AZs ([proof](#proof-it-works)) |
+| **Built** | March 2026, as Assignment 2 of my MSc in Cloud and Network Security |
 
 ---
 
-## 🛠️ Services Deployed
+## Contents
 
-| Layer | Service | Purpose |
+- [Why This Project Exists](#why-this-project-exists)
+- [Why AWS and This Architecture](#why-aws-and-this-architecture)
+- [Architecture](#architecture)
+- [Proof It Works](#proof-it-works)
+- [Network Design](#network-design)
+- [Build and Evidence](#build-and-evidence)
+- [Security Controls](#security-controls)
+- [Monitoring and Auditing](#monitoring-and-auditing)
+- [Cost Governance and Sustainability](#cost-governance-and-sustainability)
+- [Working Within AWS Student Lab Limits](#working-within-aws-student-lab-limits)
+- [Engineering Problems Solved](#engineering-problems-solved)
+- [Residual Risks](#residual-risks)
+- [Design Decisions and Alternatives](#design-decisions-and-alternatives)
+- [Production Roadmap](#production-roadmap)
+- [Skills Demonstrated](#skills-demonstrated)
+- [Project Context](#project-context)
+
+---
+
+## Why This Project Exists
+
+### The business problem
+
+BlueTide Marine Technologies (BMT) is a case-study organisation that runs autonomous marine platforms to collect ocean and weather data. It is expanding from **collecting data** to **real-time environmental analytics and predictive modelling**. That shift brings large, unpredictable data volumes, and BMT's on-premises infrastructure cannot scale to meet them economically.
+
+My earlier critical evaluation (Assignment 1) recommended a **hybrid cloud**:
+
+- **Kept on-premises:** BMT's proprietary algorithms, which the Board considered too sensitive to move.
+- **Moved to public cloud:** processing of the data streams, which need elastic capacity.
+
+**This project is the public cloud part of that strategy.**
+
+### What the environment had to deliver
+
+| # | Requirement | Why it matters to BMT | How it is met |
+| :-: | :--- | :--- | :--- |
+| 1 | **Stay available** When infrastructure fails | Analytics and research work can continue even if a server or data centre fails. | Multi-AZ compute and database, ELB health checks, Auto Scaling self-healing |
+| 2 | **Protect sensitive data** | The Board raised data sovereignty and confidentiality concerns | Data stays private and secure with private networks, private S3 access, encryption, and blocked public access. |
+| 3 | **Control cost** | The Board feared unexpected cloud costs | Cost is controlled with a regional NAT Gateway, Glacier storage, capped scaling, and avoiding unnecessary managed-key costs. |
+| 4 | **Scale with demand** | Marine operations can cause data volumes to change sharply. | Target Tracking Auto Scaling on CPU |
+
+---
+
+## Why AWS and This Architecture
+
+AWS was chosen because of three capabilities that map directly onto BMT's requirements:
+
+- **Isolation:** VPCs and Gateway VPC Endpoints keep telemetry traffic off the public internet, which addresses the Board's sovereignty concerns.
+- **Automated cost control:** S3 lifecycle rules automatically move old data to Glacier.
+- **Repeatable, elastic compute:** Launch Templates and Auto Scaling Groups provide servers that build themselves and scale in and out.
+
+The **three-tier pattern** suits a conventional web analytics platform:
+
+- **Web tier:** a load-balanced tier that can scale out.
+- **Data tier:** a managed relational database with a cache in front of it.
+- **Storage:** object storage for bulk data.
+
+Heavier options were considered and rejected as over-engineering for this workload. They are covered in [Design Decisions and Alternatives](#design-decisions-and-alternatives).
+
+---
+
+## Architecture
+
+<p align="center">
+  <img src="images/architecture-diagram.png" alt="BMT AWS target architecture: users reach an Application Load Balancer in public subnets across two Availability Zones; EC2 instances in an Auto Scaling Group sit in private application subnets; RDS MySQL Multi-AZ, ElastiCache for Redis and S3 via VPC endpoints sit in private data subnets; KMS, CloudWatch and CloudTrail provide encryption, monitoring and auditing." width="900">
+</p>
+<p align="center"><sub><b>Figure 1.</b> Target architecture: network segmentation, security boundaries, application flow and multi-AZ design.</sub></p>
+
+> [!NOTE]
+> **Designed vs deployed.** The diagram shows the full target design. The lab build differs in the following places, for the reasons given:
+>
+> | In the design | Deployed as | Reason |
+> | :--- | :--- | :--- |
+> | CloudFront + AWS WAF at the edge | Not deployed; the ALB is the internet-facing entry point | **Blocked by the student lab** ([proof](#working-within-aws-student-lab-limits)) |
+> | Route 53 DNS | Not deployed; the ALB is reached on its AWS-generated DNS name | Not part of the lab build |
+> | HTTPS from users to the ALB | **HTTP listener on port 80 only** | No TLS certificate provisioned in the lab (on the [roadmap](#production-roadmap)) |
+> | EC2 servers in their own "ALB-only" security group | Servers share the ALB's security group | Wrong group attached in the launch template, found in post-build review ([details](#post-build-review-finding-security-group-attachment)) |
+> | NAT Gateway in each AZ | One **Regional** NAT Gateway | FinOps decision |
+> | Customer-managed KMS keys | AWS-managed key on RDS; S3-managed keys (SSE-S3) on S3 | **Blocked by the student lab** |
+> | Redis node in each AZ | Single-node Redis cluster (no replicas) | Sized for the proof of concept |
+
+### Request flow (as designed)
+
+1. A user's request reaches the **Application Load Balancer** in the public subnets over HTTP.
+2. The ALB forwards it only to **healthy EC2 instances** in the private application subnets, spread across both AZs.
+3. The instances read from **ElastiCache for Redis** first, and fall back to **RDS for MySQL** when the data isn't cached.
+4. Telemetry is written to **S3** through the **Gateway VPC Endpoint**, so it never crosses the public internet.
+5. **CloudWatch** tracks fleet CPU and drives scaling. **CloudTrail** records every API call in the account.
+
+---
+
+## Proof It Works
+
+The architecture was deployed and served traffic end to end.
+
+<p align="center">
+  <img src="images/live-web-app.png" alt="Browser at bmt-app-alb-966160554.us-east-1.elb.amazonaws.com showing the BMT Cloud Infrastructure web page with a System Online badge; the browser marks the connection as Not Secure because it is HTTP." width="900">
+</p>
+<p align="center"><sub><b>Figure 2. Proof:</b> The BMT site loading from the Application Load Balancer's public DNS name (<code>bmt-app-alb-….elb.amazonaws.com</code>). The page was generated by the User Data bootstrap script (Figure 6) on instances in <b>private</b> subnets, so the only way it could reach the browser is through the ALB. The browser shows <i>Not Secure</i> because the listener is HTTP only; HTTPS is on the roadmap.</sub></p>
+
+<p align="center">
+  <img src="images/ec2-instances-running.png" alt="EC2 console showing two BMT-Web-Server t3.micro instances running with 3 of 3 status checks passed, one in us-east-1a and one in us-east-1b, with no public IPv4 address." width="900">
+</p>
+<p align="center"><sub><b>Figure 3. Proof:</b> Two Auto Scaling instances <b>running</b> with <b>3/3 status checks passed</b>, one in <b>us-east-1a</b> and one in <b>us-east-1b</b>. The <i>Public IPv4</i> column is empty (<code>–</code>), so neither server can be reached directly from the internet.</sub></p>
+
+---
+
+## Network Design
+
+<p align="center">
+  <img src="images/vpc-resource-map.png" alt="AWS VPC resource map for BMT-Production-VPC showing six subnets across us-east-1a and us-east-1b, their route tables, the Internet Gateway, the Regional NAT Gateway and the S3 Gateway Endpoint." width="900">
+</p>
+<p align="center"><sub><b>Figure 4. Proof:</b> VPC resource map from the live deployment, showing the subnets, the per-subnet route tables, the Internet Gateway, the Regional NAT Gateway and the S3 Gateway Endpoint.</sub></p>
+
+| Subnet | AZ | CIDR | Tier | Default route |
+| :--- | :--- | :--- | :--- | :--- |
+| `public1` | us-east-1a | `10.0.0.0/20` | Public: ALB, NAT | Internet Gateway |
+| `public2` | us-east-1b | `10.0.16.0/20` | Public: ALB | Internet Gateway |
+| `private1` | us-east-1a | `10.0.128.0/20` | Private: application (EC2) | Regional NAT Gateway |
+| `private2` | us-east-1b | `10.0.144.0/20` | Private: application (EC2) | Regional NAT Gateway |
+| `private3` | us-east-1a | `10.0.160.0/20` | Private: data (RDS, Redis) | Regional NAT Gateway |
+| `private4` | us-east-1b | `10.0.176.0/20` | Private: data (RDS, Redis) | Regional NAT Gateway |
+
+**What the resource map shows:**
+- Only the two public subnets have a route to the **Internet Gateway**.
+- Every private subnet has its **own route table**, and its outbound traffic goes through the NAT Gateway. There is no inbound path from the internet to anything in a private subnet. This is the control that actually keeps the servers off the internet (see the [security group finding](#post-build-review-finding-security-group-attachment)).
+
+<p align="center">
+  <img src="images/s3-gateway-endpoint.png" alt="VPC endpoint BMT-Production-VPC-vpce-s3, type Gateway, status Available, associated with four private route tables." width="850">
+</p>
+<p align="center"><sub><b>Figure 5. Proof:</b> The S3 Gateway Endpoint is <i>Available</i> and attached to all four private route tables, so traffic from the private tiers to S3 stays on the AWS network.</sub></p>
+
+---
+
+## Build and Evidence
+
+The environment was built in four phases. The screenshots below are the evidence for each layer.
+
+| Phase | Focus | What was built |
+| :-: | :--- | :--- |
+| **1** | Foundation & isolation | VPC, 2 public + 4 private subnets across 2 AZs, IGW, Regional NAT Gateway, per-subnet route tables, S3 Gateway Endpoint |
+| **2** | Secure data layer | DB and cache subnet groups, RDS MySQL Multi-AZ, ElastiCache for Redis, S3 bucket with Glacier lifecycle rule and Block Public Access, encryption at rest |
+| **3** | Compute & scalability | Security groups, Ubuntu Launch Template with User Data, Target Group, internet-facing ALB (HTTP:80), ASG in the private application subnets |
+| **4** | Auditing & monitoring | Multi-region CloudTrail trail with its own log bucket, and a Target Tracking policy with auto-created CloudWatch alarms. CloudFront and WAF were attempted here and blocked by the lab. |
+
+### Compute tier: immutable and self-healing
+
+Instances are never configured by hand. A **User Data bootstrap script** in the Launch Template installs Apache and publishes the BMT site on first boot. Every instance the Auto Scaling Group launches is therefore identical and ready to serve, and nobody needs to SSH in.
+
+<p align="center">
+  <img src="images/launch-template-user-data.png" alt="EC2 Launch Template User Data field containing a bash script that runs apt-get update, installs apache2, starts and enables it, and writes the BMT index.html." width="800">
+</p>
+<p align="center"><sub><b>Figure 6. Proof:</b> The User Data bootstrap script in the Launch Template, which provisions every new instance with no manual steps. The page it writes is the one shown in Figure 2.</sub></p>
+
+<p align="center">
+  <img src="images/asg-scaling-policy.png" alt="Auto Scaling Group review: desired capacity 2, minimum 2, maximum 4, target tracking policy keeping average CPU utilisation at 70, scale-in enabled, scale-in protection disabled." width="800">
+</p>
+<p align="center"><sub><b>Figure 7. Proof:</b> Auto Scaling Group set to min 2 / max 4, with a Target Tracking policy that keeps average CPU at <b>70%</b>. The hard maximum of 4 caps compute cost.</sub></p>
+
+<p align="center">
+  <img src="images/asg-health-checks.png" alt="Auto Scaling Group review showing health check type EC2 and ELB with a 300 second grace period, ARC zonal shift disabled, and no VPC Lattice target groups." width="800">
+</p>
+<p align="center"><sub><b>Figure 8. Proof:</b> <b>ELB health checks</b> are enabled alongside EC2 status checks, with a 300-second grace period for the bootstrap to finish. An instance whose Apache service stops responding is replaced, not just one whose VM has failed.</sub></p>
+
+<p align="center">
+  <img src="images/asg-self-healing.png" alt="Auto Scaling group bmt-web-asg activity history showing instances being terminated after failing health checks and new instances launched in response to replace them, all successful." width="850">
+</p>
+<p align="center"><sub><b>Figure 9. Proof:</b> Self-healing in action. The ASG detects unhealthy instances, terminates them and launches replacements automatically, keeping 2 instances across 2 AZs.</sub></p>
+
+### Data tier: resilient and encrypted
+
+<p align="center">
+  <img src="images/rds-multi-az-encryption.png" alt="RDS instance bmt-environmental-db configuration: MySQL 8.4.7, db.t3.micro, Multi-AZ Yes, secondary zone us-east-1b, encryption enabled with the aws/rds KMS key, Enhanced Monitoring disabled." width="850">
+</p>
+<p align="center"><sub><b>Figure 10. Proof:</b> RDS for MySQL with <b>Multi-AZ: Yes</b> and a standby in <b>us-east-1b</b>, so failover is automatic. Storage is encrypted with the <b>AWS-managed KMS key</b> (<code>aws/rds</code>). Enhanced Monitoring shows as disabled because the lab blocked the role it needs.</sub></p>
+
+<p align="center">
+  <img src="images/elasticache-encryption.png" alt="ElastiCache for Redis cluster review: bmt-redis-subnet-group, encryption at rest enabled with the default key, encryption in transit enabled with transit encryption mode Required." width="800">
+</p>
+<p align="center"><sub><b>Figure 11. Proof:</b> ElastiCache for Redis in its own private subnet group, with <b>encryption at rest</b> and <b>encryption in transit</b> (mode: <i>Required</i>).</sub></p>
+
+### Storage tier: private, locked down and cost-managed
+
+<p align="center">
+  <img src="images/s3-buckets.png" alt="S3 general purpose buckets: aws-cloudtrail-logs bucket and bmt-marine-data-logs bucket, both in us-east-1." width="800">
+</p>
+<p align="center"><sub><b>Figure 12. Proof:</b> Separate buckets for application telemetry (<code>bmt-marine-data-logs</code>) and CloudTrail audit logs, so audit evidence is kept apart from application data.</sub></p>
+
+<p align="center">
+  <img src="images/s3-glacier-lifecycle.png" alt="S3 lifecycle configuration with one rule, Archive-to-Glacier, enabled, scope entire bucket, transition to Glacier Flexible Retrieval." width="800">
+</p>
+<p align="center"><sub><b>Figure 13. Proof:</b> The <code>Archive-to-Glacier</code> lifecycle rule moves telemetry to <b>Glacier Flexible Retrieval after 30 days</b>. Recent data stays fast to query, and historical data costs much less to keep.</sub></p>
+
+<p align="center">
+  <img src="images/s3-block-public-access.png" alt="S3 Block Public Access settings with Block all public access enabled and all four sub-settings checked." width="800">
+</p>
+<p align="center"><sub><b>Figure 14. Proof:</b> <b>Block all public access</b> is enabled on the telemetry bucket. The bucket uses S3-managed server-side encryption (<b>SSE-S3</b>, AES-256), not KMS. Moving to SSE-KMS with a customer-managed key is on the roadmap.</sub></p>
+
+---
+
+## Security Controls
+
+The design is **defence in depth**: no single control is relied on to provide complete protection.
+
+| Layer | Control | Threat addressed | Evidence |
+| :--- | :--- | :--- | :-: |
+| **Perimeter** | ALB is the only internet-facing resource | Direct attacks on servers | Figs. 2, 4 |
+| **Network** | Compute and data in private subnets with **no public IPs** and no inbound internet route | Internet exposure of internal workloads | Figs. 3, 4 |
+| **Network** | "ALB-only" EC2 security group designed and created, but **not attached** in the lab build | Bypassing the load balancer, lateral movement | Figs. 15, 16 |
+| **Data path** | S3 Gateway VPC Endpoint | Telemetry crossing the public internet | Fig. 5 |
+| **Data at rest** | RDS: AWS-managed KMS key (`aws/rds`) · S3: SSE-S3 · Redis: at-rest encryption (all AES-256) | Disclosure of stored research data | Figs. 10, 11, 14 |
+| **Data in transit** | Redis transit encryption set to *Required* · user-to-ALB traffic is **HTTP** (HTTPS on roadmap) | Interception of cached data | Fig. 11 |
+| **Storage** | S3 Block Public Access | Accidental public exposure of buckets | Fig. 14 |
+| **Host** | No SSH-based configuration; instances are built from a template | Configuration drift, credential exposure | Fig. 6 |
+| **Detective** | Multi-region CloudTrail | Undetected or unattributable changes | Figs. 17, 18 |
+| **Availability** | Multi-AZ RDS, ASG across 2 AZs, ELB health checks | Service loss from AZ or instance failure | Figs. 3, 8–10 |
+
+### Post-build review finding: security group attachment
+
+The design calls for **two separate security groups**:
+- an ALB group that accepts web traffic from the internet;
+- an EC2 group (`bmt-ec2-web-sg`) that accepts HTTP **only from the ALB's group**.
+
+The EC2 group was created correctly (Figure 15). When I reviewed my evidence after the build, I found the launch template had attached the **ALB's group** (`bmt-web-server-sg`) to the servers instead (Figure 16). That group allows ports 80 and 443 from `0.0.0.0/0`.
+
+**Impact:** low in practice, because the servers have no public IP and sit in private subnets with no inbound route from the internet (Figures 3 and 4). However, it removes a layer of defence in depth. Any host inside the VPC could reach the servers directly without going through the ALB.
+
+**Fix:**
+1. Publish a new launch template version that attaches `bmt-ec2-web-sg`.
+2. Run an ASG instance refresh so every server picks it up.
+3. Give the ALB its own dedicated security group, so the two roles are never shared again.
+
+<p align="center">
+  <img src="images/security-group-alb-only.png" alt="Security group bmt-ec2-web-sg with description Allow inbound HTTP traffic ONLY from the ALB; the only inbound rule is HTTP port 80 from security group sg-056db63732e976bec." width="850">
+</p>
+<p align="center"><sub><b>Figure 15. Proof:</b> The intended EC2 security group, <code>bmt-ec2-web-sg</code>, whose only inbound rule is HTTP from the ALB's security group.</sub></p>
+
+<p align="center">
+  <img src="images/launch-template-security-group.png" alt="Launch template network settings with the existing security group bmt-web-server-sg (sg-056db63732e976bec) selected for instances." width="750">
+</p>
+<p align="center"><sub><b>Figure 16. Finding:</b> The launch template attached <code>bmt-web-server-sg</code>, the ALB's own security group, to the servers instead of <code>bmt-ec2-web-sg</code>.</sub></p>
+
+> **Why this matters:** industry analyses attribute most cloud security incidents to customer **misconfiguration**, not provider failure. This finding is a small example of exactly that kind of gap. Checking deployed configuration against the design is what caught it.
+
+---
+
+## Monitoring and Auditing
+
+<p align="center">
+  <img src="images/cloudtrail-trail.png" alt="CloudTrail trail BMT-Security-Audit-Trail, home region US East N. Virginia, multi-region trail Yes, logging to an aws-cloudtrail-logs S3 bucket, status Logging." width="850">
+</p>
+<p align="center"><sub><b>Figure 17. Proof:</b> <code>BMT-Security-Audit-Trail</code> is a <b>multi-region</b> trail in the <i>Logging</i> state, writing to a dedicated S3 bucket.</sub></p>
+
+<p align="center">
+  <img src="images/cloudtrail-event-history.png" alt="CloudTrail event history filtered to write events, listing ConsoleLogin, GetSigninToken, UpdateRole and DeleteRolePolicy events with timestamps, users and event sources." width="850">
+</p>
+<p align="center"><sub><b>Figure 18. Proof:</b> CloudTrail <b>capturing real activity</b>: console sign-ins and IAM changes such as <code>UpdateRole</code> and <code>DeleteRolePolicy</code>, each recorded with the time, the user and the source service.</sub></p>
+
+<p align="center">
+  <img src="images/cloudwatch-alarms.png" alt="CloudWatch alarms list with two TargetTracking alarms for bmt-web-asg, AlarmHigh in OK state and AlarmLow in alarm, both with actions enabled." width="800">
+</p>
+<p align="center"><sub><b>Figure 19. Proof:</b> The Target Tracking policy created the CloudWatch alarms automatically. <i>AlarmHigh</i> triggers scale-out and <i>AlarmLow</i> triggers scale-in, with no manual intervention.</sub></p>
+
+---
+
+## Cost Governance and Sustainability
+
+Moving to the cloud changes spending from fixed capital expenditure (CapEx) to pay-as-you-go operating expenditure (OpEx). That flexibility is what creates the "bill shock" risk the Board was worried about, so cost controls were built into the architecture itself:
+
+| FinOps control | Effect |
+| :--- | :--- |
+| **Regional NAT Gateway** instead of one per AZ | Keeps outbound access resilient across AZs while cutting fixed hourly networking cost |
+| **S3 → Glacier after 30 days** | Historical telemetry kept at a fraction of Standard storage cost |
+| **ASG hard maximum of 4** | Elasticity with a ceiling, so a traffic spike can't become a runaway bill |
+| **Scale-in enabled, no scale-in protection** | Idle capacity is removed automatically |
+| **AWS-managed and S3-managed keys** | No monthly per-key charge |
+| **Right-sized services** (`t3.micro`, `db.t3.micro`, `cache.t3.micro`) | Matches the proof-of-concept load |
+| **No EKS, VPC Lattice or ARC zonal shift** | Avoids paying for complexity the workload doesn't need |
+
+**Sustainability:** on-premises estates are sized for peak load, so much of their capacity sits idle while still drawing power. Auto Scaling **scales in** when demand drops, so energy use follows the real workload. Running on hyperscale data centres, which are more energy-efficient than typical on-premises facilities, adds to that benefit.
+
+---
+
+## Working Within AWS Student Lab Limits
+
+This environment was built in an **AWS Academy Learner Lab**, the sandbox AWS provides for students. It runs under a fixed IAM role (`voclabs`) that **explicitly denies** a number of actions, to prevent unexpected costs and keep the sandbox safe. Some standard production controls therefore couldn't be deployed, even when correctly configured.
+
+In each case the control was **attempted**, the denial was **recorded**, and a **compensating control** was put in place:
+
+| Unavailable in the lab | What was denied | Alternative control used | Production path |
+| :--- | :--- | :--- | :--- |
+| **Amazon CloudFront + AWS WAF** | `cloudfront:CreateDistribution` | ALB as the single entry point, private tiers with no public IPs, and CloudTrail auditing (an "assume breach" posture) | CloudFront + WAF managed rule groups in front of the ALB |
+| **Customer-managed KMS keys** | `kms:CreateKey` | AWS-managed KMS key on RDS, SSE-S3 on S3, default-key encryption on Redis (all AES-256) | Customer-managed keys with rotation and key policies; SSE-KMS on S3 |
+| **RDS Enhanced Monitoring** | Creating `rds-monitoring-role` | Standard CloudWatch RDS metrics | Enhanced Monitoring + Performance Insights |
+
+<p align="center">
+  <img src="images/cloudfront-access-denied.png" alt="AWS console error: the voclabs student role is not authorized to perform cloudfront:CreateDistribution because no identity-based policy allows the action." width="850">
+</p>
+<p align="center"><sub><b>Figure 20. Proof:</b> The lab's student role is denied <code>cloudfront:CreateDistribution</code>, so edge protection could not be deployed. This is why the ALB is the internet-facing entry point.</sub></p>
+
+> [!IMPORTANT]
+> These gaps come from the **student lab**, not from the design. The target architecture (Figure 1) includes all of these controls, and each one has a defined production upgrade path.
+
+---
+
+## Engineering Problems Solved
+
+| Problem | Diagnosis | Resolution |
 | :--- | :--- | :--- |
-| **Network** | VPC, Subnets, Route Tables, NAT Gateway | Network segmentation and isolation |
-| **Edge** | Application Load Balancer | Public entry point |
-| **Compute** | EC2, Launch Templates, Auto Scaling Group | Scalable application tier |
-| **Database** | Amazon RDS MySQL Multi-AZ | Relational database platform |
-| **Cache** | ElastiCache Redis | Reduce database load |
-| **Storage** | Amazon S3 + Glacier | Telemetry storage and archiving |
-| **Security** | Security Groups, IAM, KMS | Access control and encryption |
-| **Monitoring** | CloudWatch | Infrastructure monitoring |
-| **Auditing** | CloudTrail | Activity logging and forensic visibility |
+| **Blocked edge security** | IAM denied CloudFront and WAF | Moved the focus inward: ALB as the single entry point, private tiers with no public IPs, full audit logging |
+| **No customer-managed keys** | IAM denied `kms:CreateKey` | Encrypted RDS with the AWS-managed KMS key and S3 with SSE-S3, so encryption was kept and per-key cost removed |
+| **No Enhanced Monitoring role** | IAM blocked creating the monitoring role | Used standard CloudWatch metrics, which are enough for a proof of concept |
+| **S3 endpoint route collision** | One private route table already had a prefix-list route (`pl-63a5400a`) for S3 | Associated the endpoint only with route tables without a conflicting route, keeping isolation without breaking routing |
+| **Security group drift from the design** | Post-build review found the servers carried the ALB's security group | Documented the impact and the fix (new template version + instance refresh) — [details](#post-build-review-finding-security-group-attachment) |
+
+<p align="center">
+  <img src="images/route-conflict-error.png" alt="VPC console error: there was an error creating VPC endpoint, route table already has a route with destination-prefix-list-id pl-63a5400a, with the private route tables selected below." width="850">
+</p>
+<p align="center"><sub><b>Figure 21. Proof:</b> The route-table conflict met during endpoint creation. Resolving it meant working out how gateway endpoints insert prefix-list routes into route tables.</sub></p>
 
 ---
 
-## 🧠 Architecture Decisions
+## Residual Risks
 
-Every major design decision was evaluated against three competing priorities: **Security**, **Availability**, and **Cost**.
-
-### Why Amazon RDS Instead of MySQL on EC2?
-**Selected:** Amazon RDS Multi-AZ
-**Reasons:**
-* Automated backups
-* Built-in failover
-* Reduced administrative overhead
-* Faster disaster recovery
-* Better operational resilience
-
-### Why ElastiCache Redis?
-Repeated dashboard and analytics queries can overload relational databases. Redis was introduced to:
-* Reduce read pressure on RDS
-* Improve response times
-* Increase scalability
-* Improve user experience
-
-### Why a Single NAT Gateway?
-Traditional highly available deployments typically use one NAT Gateway per Availability Zone. For this project:
-* Fixed infrastructure costs were reduced.
-* Routing complexity was simplified.
-* Resilience remained acceptable for project requirements.
-* *This reflects a balance between engineering requirements and financial governance.*
-
-### Why Immutable Infrastructure?
-Instead of manually configuring servers, Launch Templates define server configurations, User Data scripts automate provisioning, and Auto Scaling automatically creates identical replacements. 
-**Benefits include:**
-* Reduced human error
-* Faster recovery
-* Consistent deployments
-* Improved security
+| Risk | Cause | Current mitigation | Planned mitigation |
+| :--- | :--- | :--- | :--- |
+| **Layer 7 attacks** (e.g. HTTP floods, injection) | No WAF or CloudFront in front of the ALB (blocked by the lab) | Private tiers, CloudTrail | CloudFront + AWS WAF |
+| **Unencrypted user-to-ALB traffic** | HTTP listener only | Traffic beyond the ALB stays inside the VPC | ACM certificate + HTTPS listener with HTTP → HTTPS redirect |
+| **Servers reachable from inside the VPC without going through the ALB** | Servers share the ALB's security group (open on 80/443) | No public IPs; no inbound internet route to private subnets | Attach `bmt-ec2-web-sg` via new launch template version + instance refresh |
+| **Key-management lock-in** | Dependence on AWS-managed keys | Encryption at rest is still enforced | Customer-managed keys; review portability for a multi-cloud future |
+| **Cache single point of failure** | Single-node Redis | The cache holds no data of record, which stays in RDS | Replica in the second AZ with automatic failover |
 
 ---
 
-## 🏗️ Build Walkthrough
+## Design Decisions and Alternatives
 
-The infrastructure was built across four phases.
+<details open>
+<summary><strong>RDS Multi-AZ, not a database on EC2</strong></summary>
 
-### Phase 1 — Foundation and Isolation (VPC)
-In the first phase, we focused on building a solid and secure network foundation that could support highly available workloads. We deployed a custom VPC (10.0.0.0/16) across two Availability Zones. 
+RDS Multi-AZ provides a standby database in a second AZ and automatically fails over if needed, avoiding manual patching, backups, failover, and a single point of failure.
+</details>
 
-The network contains 2 Public Subnets, 2 Private Application Subnets, 2 Private Data Subnets, an Internet Gateway, a NAT Gateway, Route Tables, and a VPC Endpoint for S3.
+<details open>
+<summary><strong>ElastiCache for Redis in front of RDS</strong></summary>
 
-> **Visual Proof: Initial Network Deployment**
-> 
-> <img src="images/phase-1-foundation.png" alt="Phase 1: Foundation and Isolation" width="800">
+Analytics dashboards often run the same queries repeatedly. Using Redis to store these results reduces the load on the main database, makes dashboards faster, and helps prevent the database from becoming a bottleneck.
+</details>
 
-> **Visual Proof: Network Routing & Isolation**
-> 
-> <img src="images/vpc-resource-map.png" alt="VPC Resource Map" width="800">
+<details open>
+<summary><strong>S3 + Glacier, not EBS</strong></summary>
 
-* **Security Outcome:** Application servers, databases, and cache nodes remain isolated within private subnets and are never exposed to the internet directly.
-* **FinOps Outcome:** A single Regional NAT Gateway was selected to reduce recurring operational costs while maintaining acceptable resilience.
+Block storage is better for active data, not for storing large amounts of old telemetry. Object storage with lifecycle rules is better for data that is used now and archived later.
+</details>
 
-### Phase 2 — Secure Data Layer (RDS & ElastiCache)
-The data layer was deployed entirely within private subnets.
+<details open>
+<summary><strong>Regional NAT Gateway, not one per AZ</strong></summary>
 
-**Amazon RDS MySQL Multi-AZ**
-RDS was configured using Multi-AZ deployment. AWS automatically provisions a standby database instance in a second Availability Zone to provide failover capability.
-* **Benefits:** Automatic failover, increased availability, database redundancy, reduced recovery time.
+A NAT Gateway in every AZ improves resilience but costs more because each one has hourly and data processing charges. A Regional NAT Gateway provides one managed exit across AZs, reducing costs. This is a deliberate trade-off between resilience and cost.
+</details>
 
-> **Visual Proof: Database Resilience**
-> 
-> <img src="images/rds-multi-az-status.png" alt="RDS Multi-AZ Status" width="800">
+<details>
+<summary><strong>What was deliberately left out</strong></summary>
 
-**ElastiCache Redis**
-Redis was deployed to improve application performance and reduce database load.
-* **Benefits:** Faster data retrieval, reduced database utilisation, improved scalability.
-
-**Amazon S3 Storage**
-Environmental data collected by BMT is stored in Amazon S3. In order to optimise cost, lifecycle policies automatically transition older data into Glacier Flexible Retrieval after 30 days.
-* **Security Controls:** AWS KMS encryption, VPC Gateway Endpoint, Lifecycle management, Private network routing.
-
-> **Visual Proof: Storage & FinOps Optimisation**
-> *Lifecycle rule automating the transition of data to cold storage to govern cloud expenditure.*
->
-> <img src="images/s3-glacier-lifecycle.png" alt="S3 Glacier Lifecycle" width="800">
-
-### Phase 3 — Compute and Scalability (EC2 & ASG)
-The application layer was designed around automation and elasticity.
-
-**Immutable Infrastructure**
-Each EC2 instance is launched using a Launch Template and User Data bootstrap script. Instances automatically install Apache, configure the web service, and join the Auto Scaling Group. No manual server configuration is required.
-
-> **Visual Proof: High-Availability Compute Tier**
-> *Two web servers successfully bootstrapped and running across distributed Availability Zones.*
->
-> <img src="images/ec2-instances-running.png" alt="EC2 Instances Running" width="800">
-
-**Security Group Architecture**
-A layered security model was implemented. Traffic flow follows: `Internet` → `Application Load Balancer` → `EC2 Application Servers` → `RDS Database`.
-
-> **Visual Proof: Defense-in-Depth Ingress Controls**
-> *EC2 Security Group explicitly configured to reject direct internet traffic, strictly allowing requests only from the ALB.*
->
-> <img src="images/security-group-alb-only.png" alt="Security Group Ingress Rules" width="800">
-
-* **Security Outcome:** Application servers do not accept direct internet traffic. All requests must first pass through the Application Load Balancer.
-
-**Target Group Configuration**
-The Application Load Balancer routes traffic only to healthy instances.
-
-> **Visual Proof: Target Group Health**
-> 
-> <img src="images/create-target-group.png" alt="Create the Target Group" width="800">
-
-**Auto Scaling**
-The Auto Scaling Group was configured to automatically adapt to demand while maintaining strict cost controls.
-* **Minimum Capacity:** 2
-* **Desired Capacity:** 2
-* **Maximum Capacity:** 4
-* **Scaling Trigger:** CPU Utilisation
-
-> **Visual Proof: Auto Scaling Activity**
-> 
-> <img src="images/auto-scaling-activity.png" alt="Auto Scaling Activity History" width="800">
-
-### Phase 4 — Security Auditing & Monitoring (CloudTrail)
-CloudFront and AWS WAF were originally planned as perimeter security controls. However, the AWS Learner Lab IAM role explicitly denied permissions for CloudFront deployment. Instead of leaving the requirement unaddressed, alternative security controls were used to achieve a similar level of protection.
-
-**CloudTrail Audit Logging**
-AWS CloudTrail was enabled across the entire environment to act as an immutable detective control. It continuously records API activity, Security Group modifications, IAM events, and resource changes.
-* **Security Outcome:** Provides complete forensic visibility. Every action taken within the AWS environment is permanently attributed and auditable.
-
-> **Visual Proof: Forensic Log Storage**
-> *Dedicated S3 buckets successfully provisioned to isolate and retain immutable CloudTrail audit logs separately from application data.*
->
-> <img src="images/s3-buckets-logs.png" alt="S3 Audit Logs" width="800">
-
-**CloudWatch Automated Monitoring**
-CloudWatch alarms continuously monitor infrastructure performance. Scaling policies automatically create alarms for scale-out and scale-in events.
-
-> **Visual Proof: Automated Monitoring**
-> *CloudWatch Alarm actively tracking CPU utilization to trigger Auto Scaling events without manual intervention.*
->
-> <img src="images/cloudwatch-alarm.png" alt="CloudWatch Alarm State" width="800">
-
-* **Outcome:** The environment automatically responds to workload changes while maintaining a complete, auditable paper trail of every system shift.
+- **Amazon EKS:** a Kubernetes control plane is unjustified overhead for a conventional three-tier app.
+- **VPC Lattice:** a service-mesh layer adds cost and complexity when the ALB already handles ingress.
+- **ARC zonal shift:** an ASG spread across AZs plus a cross-zone ALB already gives enough resilience at this scale.
+- **"Prioritise availability" maintenance policy:** launching replacements before terminating raises cost, so the default mixed behaviour was kept.
+</details>
 
 ---
 
-## ⚠️ Risk Assessment
-
-| Risk | Impact | Mitigation |
-| :--- | :--- | :--- |
-| **Database failure** | High | RDS Multi-AZ |
-| **Availability Zone outage** | High | Multi-AZ deployment |
-| **Traffic spikes** | High | Auto Scaling |
-| **Server compromise** | Medium | Private subnets and Security Groups |
-| **Storage growth** | Medium | S3 Lifecycle Policies |
-| **Unauthorized changes** | High | CloudTrail logging |
-| **Excessive cloud costs** | Medium | Scaling limits and FinOps controls |
-
-**Security Perspective:** The environment follows a defence-in-depth strategy where multiple layers of security work together to secure the environment. No single control is expected to provide complete protection.
-
----
-
-## 🎯 Three Engineering Problems Solved
-
-**1. Controlling Infrastructure Costs**
-* **Controls implemented:** Single Regional NAT Gateway, S3 Lifecycle Policies, Auto Scaling maximum limits, Service right-sizing.
-* **Outcome:** Infrastructure remains predictable and financially sustainable.
-
-**2. Protecting Sensitive Data**
-* **Controls implemented:** Private subnets, Security Group chaining, AWS KMS encryption, S3 VPC Endpoint.
-* **Outcome:** Data remains protected both in transit and at rest.
-
-**3. Navigating IAM Restrictions**
-* **Constraints encountered:** Customer Managed KMS Keys, CloudFront, Enhanced RDS Monitoring blocks.
-* **Response:** Implemented compensating controls, documented limitations, and defined production upgrade paths.
-* **Outcome:** Security objectives remained satisfied despite environmental constraints.
-
----
-
-## 🚀 Production Improvement Roadmap
-
-If deployed in a production environment, the following enhancements would be implemented:
+## Production Roadmap
 
 **Security**
-* AWS WAF
-* CloudFront CDN
-* Customer Managed KMS Keys
-* AWS Security Hub
-* Amazon GuardDuty
-* AWS Config
+- Attach the dedicated `bmt-ec2-web-sg` to the servers and give the ALB its own security group
+- CloudFront + AWS WAF managed rules in front of the ALB
+- ACM certificate and HTTPS listener on the ALB (HTTP → HTTPS redirect), plus enforced TLS to RDS
+- Customer-managed KMS keys with automatic rotation, and SSE-KMS on S3
+- CloudTrail log file validation and S3 Object Lock for tamper-evident audit logs
+- Amazon GuardDuty, AWS Security Hub and AWS Config (with a rule to flag security group drift)
+- SSM Session Manager for break-glass access, with no SSH keys
 
 **Resilience**
-* Cross-region disaster recovery
-* Route 53 failover routing
-* Cross-region S3 replication
+- Redis replica with automatic failover
+- Cross-region disaster recovery with Route 53 failover routing, and cross-region S3 replication
 
 **Observability**
-* Enhanced RDS Monitoring
-* CloudWatch Dashboards
-* Centralised log aggregation
+- RDS Enhanced Monitoring and Performance Insights
+- CloudTrail → CloudWatch Logs with metric filters for real-time security alerting
+- CloudWatch dashboards
 
-**DevOps**
-* Terraform Infrastructure as Code
-* GitHub Actions CI/CD Pipeline
-* Automated security scanning
-* Compliance validation
+**Automation**
+- Terraform for the whole environment, so security group attachments are defined in code and reviewed
+- GitHub Actions CI/CD with IaC security scanning (e.g. Checkov, tfsec)
 
 ---
 
-## 🚀 Skills Demonstrated
+## Skills Demonstrated
 
-| Skill Area | Evidence |
+| Skill area | Evidence in this project |
 | :--- | :--- |
-| **Cloud Architecture** | Multi-tier VPC design |
-| **Security Engineering** | Defence-in-depth controls |
-| **High Availability** | Multi-AZ deployment |
-| **FinOps** | Cost-governed infrastructure |
-| **Automation** | Launch Templates and Auto Scaling |
-| **Monitoring** | CloudWatch |
-| **Auditing** | CloudTrail |
-| **Problem Solving** | Compensating controls for IAM restrictions |
-| **Technical Documentation** | Architecture decisions and trade-off analysis |
+| Cloud architecture | Multi-tier, multi-AZ VPC with explicit public/private tiering, deployed and serving traffic |
+| Network security | Route-table isolation, private tiers with no public IPs, Gateway VPC Endpoint |
+| Security engineering | Defence-in-depth control mapping, encryption at rest and in transit, audit logging |
+| Security review | Found and documented a security group misconfiguration by checking deployed configuration against the design |
+| High availability | Multi-AZ RDS, ASG across two AZs, ELB-driven self-healing |
+| FinOps | Regional NAT, Glacier lifecycle, capped scaling, managed-key cost avoidance |
+| Automation | Launch Templates, User Data bootstrap, Target Tracking scaling |
+| Problem solving | Compensating controls for three IAM denials, and diagnosis of a routing conflict |
+| Risk management | Residual risk register with planned mitigations |
+| Technical documentation | Decision records, trade-off analysis, designed-vs-deployed traceability |
 
 ---
 
-## 🎓 Project Context
-This project was developed as part of my MSc in Information Security at the University of Bolton, and focuses on translating network defence principles into a practical cloud architecture using AWS services and industry-standard design patterns.
+## Project Context
 
----
+This project was completed as an **Assignment** of my **MSc in Cloud and Network Security** at the **University of Greater Manchester**. It followed a critical evaluation of BMT's infrastructure and covers the practical design, implementation and reflection for the public cloud part of the recommended hybrid strategy.
 
-## 💻 Technologies Used
-AWS VPC • EC2 • Auto Scaling • Application Load Balancer • RDS MySQL • ElastiCache Redis • S3 • Glacier • CloudWatch • CloudTrail • IAM • KMS
+The README describes what was actually deployed. Any differences from the original design, such as security groups, S3 encryption, and the HTTP-only listener, are clearly explained and supported with evidence.
+
+**Technologies:** AWS VPC · EC2 · Auto Scaling · Application Load Balancer · RDS for MySQL · ElastiCache for Redis · S3 · S3 Glacier · VPC Endpoints · NAT Gateway · CloudWatch · CloudTrail · IAM · KMS
